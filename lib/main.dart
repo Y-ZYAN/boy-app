@@ -11,7 +11,7 @@ class MomGuardApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '手机使用监控',
+      title: '手机守护',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
@@ -28,53 +28,63 @@ class UsageMonitorPage extends StatefulWidget {
   State<UsageMonitorPage> createState() => _UsageMonitorPageState();
 }
 
-class _UsageMonitorPageState extends State<UsageMonitorPage> {
-  String _status = '正在检查权限…';
+class _UsageMonitorPageState extends State<UsageMonitorPage>
+    with WidgetsBindingObserver {
+  final _channel = const MethodChannel('usage_stats');
+  bool _hasPermission = false;
+  bool _checking = true;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _checkPermission();
   }
 
-  Future<void> _checkPermission() async {
-    // 通过 MethodChannel 调用 Android 原生 API 检查使用统计权限
-    // 简单版本：引导用户手动开启
-    const channel = MethodChannel('usage_stats');
-    bool granted;
-    try {
-      granted = await channel.invokeMethod('hasUsageStatsPermission');
-    } catch (_) {
-      // MethodChannel 还没注册 → 通过检查 setting 的方式判断
-      granted = false;
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// 从设置页面返回时自动重新检查
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkPermission();
     }
+  }
 
-    if (!mounted) return;
-
-    if (granted) {
-      setState(() => _status = '✅ 权限已开启');
-    } else {
-      setState(() => _status = '❌ 未获得「使用情况访问」权限');
+  Future<void> _checkPermission() async {
+    setState(() => _checking = true);
+    try {
+      final granted = await _channel
+          .invokeMethod<bool>('hasUsageStatsPermission');
+      if (mounted) {
+        setState(() {
+          _hasPermission = granted ?? false;
+          _checking = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hasPermission = false;
+          _checking = false;
+        });
+      }
     }
   }
 
   void _openSettings() {
-    const channel = MethodChannel('usage_stats');
-    try {
-      channel.invokeMethod('openUsageStatsSettings');
-    } catch (_) {
-      // Fallback: 直接打开设置
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请手动前往：设置 → 应用 → 特殊权限 → 使用情况访问权限')),
-      );
-    }
+    _channel.invokeMethod('openUsageStatsSettings');
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('手机使用监控'),
+        title: const Text('手机守护'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Center(
@@ -84,32 +94,78 @@ class _UsageMonitorPageState extends State<UsageMonitorPage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                Icons.visibility,
+                _checking
+                    ? Icons.hourglass_empty
+                    : _hasPermission
+                        ? Icons.visibility
+                        : Icons.visibility_off,
                 size: 80,
-                color: _status.startsWith('✅')
-                    ? Colors.green
-                    : Colors.grey,
+                color: _checking
+                    ? Colors.grey
+                    : _hasPermission
+                        ? Colors.green
+                        : Colors.redAccent,
               ),
               const SizedBox(height: 24),
-              Text(
-                _status,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 32),
-              if (_status.startsWith('❌'))
-                ElevatedButton.icon(
-                  onPressed: _openSettings,
-                  icon: const Icon(Icons.settings),
-                  label: const Text('前往开启权限'),
-                ),
-              const SizedBox(height: 16),
-              Text(
-                '需要「使用情况访问」权限才能读取\n各 App 的使用时长数据',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey,
+              if (_checking)
+                const Column(
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('正在检查权限…'),
+                  ],
+                )
+              else if (_hasPermission)
+                const Column(
+                  children: [
+                    Text(
+                      '✅ 权限已开启',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green,
+                      ),
                     ),
-              ),
+                    SizedBox(height: 12),
+                    Text(
+                      '监控功能即将上线，敬请期待 👀',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ],
+                )
+              else
+                Column(
+                  children: [
+                    const Text(
+                      '❌ 未获得「使用情况访问」权限',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.redAccent,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      '请授予权限以监控各 App 的使用时长',
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 32),
+                    ElevatedButton.icon(
+                      onPressed: _openSettings,
+                      icon: const Icon(Icons.settings),
+                      label: const Text('前往开启权限'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 32, vertical: 16),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: _checkPermission,
+                      child: const Text('已开启？点此重新检查'),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),
