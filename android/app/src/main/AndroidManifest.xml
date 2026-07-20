@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
     <application
-        android:label="mom_app"
+        android:label="手机守护"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
