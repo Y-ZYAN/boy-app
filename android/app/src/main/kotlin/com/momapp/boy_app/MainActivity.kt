@@ -172,7 +172,8 @@ class MainActivity : FlutterActivity() {
         val packageName: String,
         val appName: String,
         val startTimeMillis: Long,
-        val endTimeMillis: Long   // -1 表示正在使用
+        val endTimeMillis: Long,   // -1 表示正在使用
+        val isUninstalled: Boolean = false
     )
 
     private fun queryUsageSessions(): Map<String, Any?> {
@@ -193,14 +194,22 @@ class MainActivity : FlutterActivity() {
         var currentPkg: String? = null
         var currentStart: Long = 0
 
+        // 息屏跟踪
+        var screenOffStart: Long = -1
+        var screenOffMs: Long = 0
+
         fun closeSession(endTime: Long) {
             val pkg = currentPkg ?: return
+            val appName = resolveAppName(pkg)
+            // 检测 App 是否已卸载（resolveAppName 返回包名本身说明已卸载）
+            val uninstalled = appName == pkg
             sessions.add(
                 Session(
                     packageName = pkg,
-                    appName = resolveAppName(pkg),
+                    appName = appName,
                     startTimeMillis = currentStart,
-                    endTimeMillis = endTime
+                    endTimeMillis = endTime,
+                    isUninstalled = uninstalled
                 )
             )
             currentPkg = null
@@ -210,9 +219,23 @@ class MainActivity : FlutterActivity() {
             val e = UsageEvents.Event()
             events.getNextEvent(e)
 
+            val eventType = e.eventType
+
+            // 屏幕状态事件（先于包名检查，因为屏幕事件没有包名）
+            when (eventType) {
+                UsageEvents.Event.SCREEN_NON_INTERACTIVE -> {
+                    screenOffStart = e.timeStamp
+                }
+                UsageEvents.Event.SCREEN_INTERACTIVE -> {
+                    if (screenOffStart > 0) {
+                        screenOffMs += e.timeStamp - screenOffStart
+                        screenOffStart = -1
+                    }
+                }
+            }
+
             val pkg = e.packageName ?: continue
             val time = e.timeStamp
-            val eventType = e.eventType
 
             when (eventType) {
                 UsageEvents.Event.MOVE_TO_FOREGROUND,
@@ -234,6 +257,11 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // 屏幕仍处于息屏状态
+        if (screenOffStart > 0) {
+            screenOffMs += now - screenOffStart
+        }
+
         // 仍在使用的 App
         if (currentPkg != null) {
             closeSession(now)
@@ -242,26 +270,32 @@ class MainActivity : FlutterActivity() {
         // ── 过滤短会话 + 收集图标 ────────────────────────────────────
         val MIN_SESSION_MS = 60_000L  // < 1 分钟的丢掉
         val iconCache = mutableMapOf<String, ByteArray>()
+        val uninstalledIconSent = mutableSetOf<String>()
 
         val filteredSessions = sessions
             .filter { it.endTimeMillis - it.startTimeMillis >= MIN_SESSION_MS || it.endTimeMillis == -1L }
             .map { s ->
-                // 首次出现的包名才去拿图标
-                if (s.packageName !in iconCache) {
-                    getAppIconBytes(s.packageName)?.let { iconCache[s.packageName] = it }
+                // 首次出现的包名才去拿图标（已卸载的 App 图标拿不到，只发一次空值）
+                if (s.packageName !in iconCache && s.packageName !in uninstalledIconSent) {
+                    if (!s.isUninstalled) {
+                        getAppIconBytes(s.packageName)?.let { iconCache[s.packageName] = it }
+                    } else {
+                        uninstalledIconSent.add(s.packageName)
+                    }
                 }
                 mapOf(
                     "packageName" to s.packageName,
                     "appName" to s.appName,
                     "startTimeMillis" to s.startTimeMillis,
-                    "endTimeMillis" to if (s.endTimeMillis == -1L) -1L else s.endTimeMillis
+                    "endTimeMillis" to if (s.endTimeMillis == -1L) -1L else s.endTimeMillis,
+                    "isUninstalled" to s.isUninstalled
                 )
             }
 
-        // icons: Map<String, ByteArray> → Flutter 收到 Map<String, Uint8List>
         return mapOf(
             "sessions" to filteredSessions,
-            "icons" to iconCache
+            "icons" to iconCache,
+            "screenOffMillis" to screenOffMs
         )
     }
 

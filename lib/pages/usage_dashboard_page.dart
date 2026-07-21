@@ -17,6 +17,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
   final _channel = const MethodChannel('usage_stats');
   List<AppUsageSession> _sessions = [];
   IconCache _icons = {};
+  int _screenOffSeconds = 0;
   bool _loading = true;
   String? _error;
 
@@ -38,6 +39,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
 
       final rawSessions = raw['sessions'] as List<dynamic>;
       final rawIcons = raw['icons'] as Map<dynamic, dynamic>? ?? {};
+      final screenOffMs = raw['screenOffMillis'] as int? ?? 0;
 
       setState(() {
         _sessions = rawSessions
@@ -45,6 +47,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
             .map((m) => AppUsageSession.fromMap(Map<String, dynamic>.from(m)))
             .toList();
         _icons = rawIcons.map((key, value) => MapEntry(key as String, value as Uint8List?));
+        _screenOffSeconds = (screenOffMs / 1000).round();
         _loading = false;
       });
     } catch (e) {
@@ -214,6 +217,9 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
                         color: Theme.of(context).colorScheme.primary,
                       ),
                 ),
+                const SizedBox(height: 8),
+                Text('息屏 ${formatDuration(Duration(seconds: _screenOffSeconds))}',
+                    style: TextStyle(fontSize: 13, color: Colors.grey[500])),
               ],
             ),
           ),
@@ -236,7 +242,8 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ExpansionTile(
         leading: _appIcon(appName, pkg),
-        title: Text(appName, style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Text(_sessionTitle(appName, sessions.first.isUninstalled),
+            style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text('总计 ${formatDuration(total)}',
             style: TextStyle(color: Colors.grey[600], fontSize: 13)),
         children: [
@@ -316,13 +323,19 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
     );
   }
 
+  /// App 名称，已卸载的加后缀
+  String _sessionTitle(String appName, bool uninstalled) {
+    return uninstalled ? '$appName (已卸载)' : appName;
+  }
+
   Widget _buildRecentRow(AppUsageSession s) {
     final color = s.isActive ? Colors.green : Colors.grey;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 3),
       child: ListTile(
         leading: _appIcon(s.appName, s.packageName, active: s.isActive),
-        title: Text(s.appName, style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Text(_sessionTitle(s.appName, s.isUninstalled),
+            style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(formatTimeRange(s.startTime, s.endTime)),
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,

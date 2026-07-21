@@ -6,12 +6,14 @@ class AppUsageSession {
   final String appName;
   final DateTime startTime;
   final DateTime? endTime; // null = 正在使用
+  final bool isUninstalled; // App 已卸载
 
   AppUsageSession({
     required this.packageName,
     required this.appName,
     required this.startTime,
     this.endTime,
+    this.isUninstalled = false,
   });
 
   factory AppUsageSession.fromMap(Map<String, dynamic> map) {
@@ -22,6 +24,7 @@ class AppUsageSession {
       startTime:
           DateTime.fromMillisecondsSinceEpoch(map['startTimeMillis'] as int),
       endTime: endMs == -1 ? null : DateTime.fromMillisecondsSinceEpoch(endMs),
+      isUninstalled: (map['isUninstalled'] as bool?) ?? false,
     );
   }
 
