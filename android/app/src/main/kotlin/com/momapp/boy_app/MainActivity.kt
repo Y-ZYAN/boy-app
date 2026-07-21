@@ -1,4 +1,4 @@
-package com.momapp.mom_app
+package com.momapp.boy_app
 
 import android.app.AppOpsManager
 import android.app.usage.UsageEvents
