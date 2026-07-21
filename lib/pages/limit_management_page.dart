@@ -4,7 +4,12 @@ import '../models/app_usage_session.dart';
 import '../services/enforcement_service.dart';
 import '../utils/format_utils.dart';
 
-/// 限额管理 Tab：浏览已安装 App，设置/查看每日使用限额
+/// 限额管理 Tab：设置/查看每日使用限额
+///
+/// 数据源优先级：
+/// 1. 今天已使用的 App（可靠性最高，来自 queryUsageSessions）
+/// 2. 已设置限额的 App（可能不在今日记录中）
+/// 3. 全部已安装 App（OPPO 兼容性问题，作为补充）
 class LimitManagementPage extends StatefulWidget {
   final List<AppUsageSession> todaySessions;
   final IconCache iconCache;
@@ -20,9 +25,9 @@ class LimitManagementPage extends StatefulWidget {
 }
 
 class _LimitManagementPageState extends State<LimitManagementPage> {
-  // 合并：已安装 App + 已有限额 + 今日用量
   List<_AppLimitItem> _items = [];
   bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -32,35 +37,76 @@ class _LimitManagementPageState extends State<LimitManagementPage> {
 
   Future<void> _load() async {
     if (!mounted) return;
-    setState(() => _loading = true);
+    setState(() { _loading = true; _error = null; });
 
     try {
-      // 并行获取三个数据源，单个失败不影响其他
-      final results = await Future.wait([
-        EnforcementService.getInstalledApps().catchError((_) => <Map<String, dynamic>>[]),
-        EnforcementService.getAppLimits().catchError((_) => <Map<String, dynamic>>[]),
-        _computeUsageMap(),
-      ]);
-
-      final apps = results[0] as List<Map<String, dynamic>>;
-      final limits = results[1] as List<Map<String, dynamic>>;
-      final usageMap = results[2] as Map<String, int>;
-
-      // 构建限额查找表
-      final limitMap = <String, int>{};
-      for (final l in limits) {
-        limitMap[l['packageName'] as String] = l['dailyMinutes'] as int;
+      // ① 从已有会话构建 App 名称与用量
+      final sessionMap = <String, _AppSessionInfo>{};
+      for (final s in widget.todaySessions) {
+        final existing = sessionMap[s.packageName];
+        if (existing == null) {
+          sessionMap[s.packageName] = _AppSessionInfo(
+            appName: s.appName,
+            totalSeconds: s.duration.inSeconds,
+          );
+        } else {
+          sessionMap[s.packageName] = _AppSessionInfo(
+            appName: existing.appName,
+            totalSeconds: existing.totalSeconds + s.duration.inSeconds,
+          );
+        }
       }
 
-      final items = apps.map((app) {
-        final pkg = app['packageName'] as String;
-        return _AppLimitItem(
-          packageName: pkg,
-          appName: app['appName'] as String,
-          dailyMinutes: limitMap[pkg] ?? 0,
-          usedSeconds: usageMap[pkg] ?? 0,
-        );
-      }).toList();
+      // ② 读取已有限额
+      final limitMap = <String, int>{};
+      try {
+        final limits = await EnforcementService.getAppLimits();
+        for (final l in limits) {
+          limitMap[l['packageName'] as String] = l['dailyMinutes'] as int;
+        }
+      } catch (_) {}
+
+      // ③ 补充：有会话但没有用量数据的 App（补用量）
+      for (final entry in sessionMap.entries) {
+        if (entry.value.totalSeconds == 0) {
+          try {
+            final secs = await EnforcementService.getAppDailyUsage(entry.key);
+            sessionMap[entry.key] = _AppSessionInfo(
+              appName: entry.value.appName,
+              totalSeconds: secs,
+            );
+          } catch (_) {}
+        }
+      }
+
+      // ④ 构建列表：合并会话 App + 有限额但今天未用的 App
+      final seen = <String>{};
+      final items = <_AppLimitItem>[];
+
+      // 先加会话中的 App
+      for (final entry in sessionMap.entries) {
+        seen.add(entry.key);
+        items.add(_AppLimitItem(
+          packageName: entry.key,
+          appName: entry.value.appName,
+          dailyMinutes: limitMap[entry.key] ?? 0,
+          usedSeconds: entry.value.totalSeconds,
+        ));
+      }
+
+      // 再加有限额但今天没用过的
+      for (final entry in limitMap.entries) {
+        if (!seen.contains(entry.key)) {
+          int used = 0;
+          try { used = await EnforcementService.getAppDailyUsage(entry.key); } catch (_) {}
+          items.add(_AppLimitItem(
+            packageName: entry.key,
+            appName: entry.key, // 只有包名，没有中文名
+            dailyMinutes: entry.value,
+            usedSeconds: used,
+          ));
+        }
+      }
 
       // 有限额的排前面，按名称排序
       items.sort((a, b) {
@@ -71,19 +117,9 @@ class _LimitManagementPageState extends State<LimitManagementPage> {
       });
 
       if (mounted) setState(() { _items = items; _loading = false; });
-    } catch (_) {
-      if (mounted) setState(() { _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
-  }
-
-  Future<Map<String, int>> _computeUsageMap() async {
-    final map = <String, int>{};
-    for (final s in widget.todaySessions) {
-      if (!map.containsKey(s.packageName)) {
-        map[s.packageName] = await EnforcementService.getAppDailyUsage(s.packageName);
-      }
-    }
-    return map;
   }
 
   IconCache get _icons => widget.iconCache;
@@ -92,6 +128,44 @@ class _LimitManagementPageState extends State<LimitManagementPage> {
   Widget build(BuildContext context) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
+            const SizedBox(height: 12),
+            Text('加载失败', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 16),
+            FilledButton.tonalIcon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('重试'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_items.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.hourglass_bottom, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text('今天还没有使用记录', style: TextStyle(color: Colors.grey[600])),
+            const SizedBox(height: 8),
+            FilledButton.tonalIcon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('刷新'),
+            ),
+          ],
+        ),
+      );
     }
     return RefreshIndicator(
       onRefresh: _load,
@@ -226,6 +300,14 @@ class _LimitManagementPageState extends State<LimitManagementPage> {
 }
 
 // ─── 数据模型 ──────────────────────────────────────────────────────────
+
+/// 从会话汇总的 App 信息
+class _AppSessionInfo {
+  final String appName;
+  final int totalSeconds;
+
+  const _AppSessionInfo({required this.appName, required this.totalSeconds});
+}
 
 class _AppLimitItem {
   final String packageName;
