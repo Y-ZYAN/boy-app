@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/enforcement_service.dart';
 import 'usage_dashboard_page.dart';
 
 /// 权限检查页面：检查「使用情况访问权限」，通过后跳转到仪表盘
@@ -48,6 +49,10 @@ class _UsageMonitorPageState extends State<UsageMonitorPage>
           _checking = false;
         });
       }
+      // 权限通过后自动启动后台监控（需悬浮窗权限）
+      if (_hasPermission) {
+        _ensureMonitoring();
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -60,6 +65,38 @@ class _UsageMonitorPageState extends State<UsageMonitorPage>
 
   void _openSettings() {
     _channel.invokeMethod('openUsageStatsSettings');
+  }
+
+  /// 确保监控服务已启动；未授权悬浮窗则跳转设置
+  Future<void> _ensureMonitoring() async {
+    final hasOverlay = await EnforcementService.checkOverlayPermission();
+    if (!hasOverlay && mounted) {
+      // 首次提示去授权悬浮窗
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('需要悬浮窗权限'),
+          content: const Text('为了在 App 超限时弹出提醒，需要授予「在其他应用上层显示」权限。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('跳过'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('去授权'),
+            ),
+          ],
+        ),
+      );
+      if (go == true) {
+        await EnforcementService.openOverlaySettings();
+        // 返回后下次轮询自动重检
+      }
+      return;
+    }
+    // 已授权或用户跳过 → 尝试启动服务
+    await EnforcementService.startMonitoring();
   }
 
   @override
