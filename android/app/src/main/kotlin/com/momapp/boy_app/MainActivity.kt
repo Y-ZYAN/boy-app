@@ -8,7 +8,6 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
-import android.net.Uri
 import android.os.Build
 import android.os.Process
 import android.provider.Settings
@@ -26,7 +25,6 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                // ── Phase 1: 权限 + 查询 ────────────────────────────
                 "hasUsageStatsPermission" -> {
                     result.success(checkUsageStatsPermission())
                 }
@@ -37,95 +35,6 @@ class MainActivity : FlutterActivity() {
                 "queryUsageSessions" -> {
                     val sessions = queryUsageSessions()
                     result.success(sessions)
-                }
-                // ── Phase 2: 限额管理 ────────────────────────────────
-                "startMonitoring" -> {
-                    val granted = checkOverlayPermission()
-                    if (granted) {
-                        val intent = Intent(this, EnforcementService::class.java)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(intent)
-                        } else {
-                            startService(intent)
-                        }
-                        result.success(true)
-                    } else {
-                        result.success(false)
-                    }
-                }
-                "stopMonitoring" -> {
-                    stopService(Intent(this, EnforcementService::class.java))
-                    result.success(true)
-                }
-                "isMonitoringActive" -> {
-                    result.success(EnforcementService.isRunning)
-                }
-                "checkOverlayPermission" -> {
-                    result.success(checkOverlayPermission())
-                }
-                "openOverlaySettings" -> {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:$packageName")
-                    ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                    startActivity(intent)
-                    result.success(true)
-                }
-                "setAppLimit" -> {
-                    val pkg = call.argument<String>("packageName")
-                    val minutes = call.argument<Int>("dailyMinutes") ?: 0
-                    if (pkg != null && minutes > 0) {
-                        UsageLimitManager.setLimit(this, pkg, minutes)
-                        result.success(true)
-                    } else {
-                        result.error("INVALID_ARGS", "packageName or dailyMinutes missing", null)
-                    }
-                }
-                "removeAppLimit" -> {
-                    val pkg = call.argument<String>("packageName")
-                    if (pkg != null) {
-                        UsageLimitManager.removeLimit(this, pkg)
-                        result.success(true)
-                    } else {
-                        result.error("INVALID_ARGS", "packageName missing", null)
-                    }
-                }
-                "getAppLimits" -> {
-                    val limits = UsageLimitManager.getAllLimits(this)
-                    val list = limits.map { mapOf(
-                        "packageName" to it.packageName,
-                        "dailyMinutes" to it.dailyMinutes
-                    ) }
-                    result.success(list)
-                }
-                "getAppDailyUsage" -> {
-                    val pkg = call.argument<String>("packageName")
-                    if (pkg != null) {
-                        val seconds = UsageLimitManager.getDailyUsageSeconds(this, pkg)
-                        result.success(seconds)
-                    } else {
-                        result.error("INVALID_ARGS", "packageName missing", null)
-                    }
-                }
-                "getInstalledApps" -> {
-                    try {
-                        // 只过滤有桌面图标的 App，且跳过系统自带输入法/启动器等
-                        val intents = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
-                        val activities = packageManager.queryIntentActivities(intents, 0)
-                        val list = activities
-                            .mapNotNull { ri ->
-                                val pkg = ri.activityInfo.packageName
-                                if (pkg == packageName) return@mapNotNull null
-                                val appName = try {
-                                    val info = packageManager.getApplicationInfo(pkg, 0)
-                                    packageManager.getApplicationLabel(info).toString()
-                                } catch (_: Exception) { pkg }
-                                mapOf("packageName" to pkg, "appName" to appName)
-                            }
-                        result.success(list)
-                    } catch (e: Exception) {
-                        result.error("INSTALLED_APPS_ERROR", e.message, null)
-                    }
                 }
                 else -> {
                     result.notImplemented()
@@ -151,12 +60,6 @@ class MainActivity : FlutterActivity() {
             )
         }
         return mode == AppOpsManager.MODE_ALLOWED
-    }
-
-    private fun checkOverlayPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Settings.canDrawOverlays(this)
-        } else true
     }
 
     private fun openUsageStatsSettings() {
