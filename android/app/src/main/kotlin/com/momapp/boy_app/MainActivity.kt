@@ -109,16 +109,18 @@ class MainActivity : FlutterActivity() {
                 }
                 "getInstalledApps" -> {
                     try {
-                        val list = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
-                            .filter { info ->
-                                packageManager.getLaunchIntentForPackage(info.packageName) != null
-                            }
-                            .filter { it.packageName != packageName }
-                            .map { info ->
-                                mapOf(
-                                    "packageName" to info.packageName,
-                                    "appName" to (packageManager.getApplicationLabel(info)?.toString() ?: info.packageName)
-                                )
+                        // 只过滤有桌面图标的 App，且跳过系统自带输入法/启动器等
+                        val intents = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+                        val activities = packageManager.queryIntentActivities(intents, 0)
+                        val list = activities
+                            .mapNotNull { ri ->
+                                val pkg = ri.activityInfo.packageName
+                                if (pkg == packageName) return@mapNotNull null
+                                val appName = try {
+                                    val info = packageManager.getApplicationInfo(pkg, 0)
+                                    packageManager.getApplicationLabel(info).toString()
+                                } catch (_: Exception) { pkg }
+                                mapOf("packageName" to pkg, "appName" to appName)
                             }
                         result.success(list)
                     } catch (e: Exception) {
