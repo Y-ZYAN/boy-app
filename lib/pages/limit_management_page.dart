@@ -64,7 +64,9 @@ class _LimitManagementPageState extends State<LimitManagementPage> {
         for (final l in limits) {
           limitMap[l['packageName'] as String] = l['dailyMinutes'] as int;
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('getAppLimits error: $e');
+      }
 
       // ③ 补充：有会话但没有用量数据的 App（补用量）
       for (final entry in sessionMap.entries) {
@@ -358,12 +360,30 @@ class _LimitPickerSheet extends StatefulWidget {
 
 class _LimitPickerSheetState extends State<_LimitPickerSheet> {
   late int _minutes;
-  static const List<int> _options = [15, 30, 45, 60, 90, 120];
+  late TextEditingController _customController;
+  static const List<int> _options = [5, 10, 15, 30, 45, 60, 90, 120];
+  bool _isCustom = false;
 
   @override
   void initState() {
     super.initState();
     _minutes = widget.initialMinutes;
+    _customController = TextEditingController(text: _minutes.toString());
+    if (!_options.contains(_minutes)) _isCustom = true;
+  }
+
+  @override
+  void dispose() {
+    _customController.dispose();
+    super.dispose();
+  }
+
+  void _selectOption(int min) {
+    setState(() {
+      _minutes = min;
+      _isCustom = false;
+      _customController.text = min.toString();
+    });
   }
 
   @override
@@ -388,37 +408,49 @@ class _LimitPickerSheetState extends State<_LimitPickerSheet> {
           Text('${widget.appName} 每日限额',
               style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 16),
-          // 选项快捷按钮
+          // 快捷选项
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: _options.map((min) {
-              final selected = _minutes == min;
+              final selected = _minutes == min && !_isCustom;
               return ChoiceChip(
                 label: Text('$min 分钟'),
                 selected: selected,
-                onSelected: (_) => setState(() => _minutes = min),
+                onSelected: (_) => _selectOption(min),
               );
             }).toList(),
           ),
-          const SizedBox(height: 16),
-          // 自定义滑块
+          const SizedBox(height: 12),
+          // 自定义输入
           Row(
             children: [
-              const Text('15'),
               Expanded(
-                child: Slider(
-                  value: _minutes.toDouble(),
-                  min: 15,
-                  max: 120,
-                  divisions: 7, // 15, 30, 45, 60, 75, 90, 105, 120
-                  label: '$_minutes 分钟',
-                  onChanged: (v) => setState(() => _minutes = v.round()),
+                child: TextField(
+                  controller: _customController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: '自定义分钟',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    suffixText: '分钟',
+                  ),
+                  onChanged: (v) {
+                    final n = int.tryParse(v);
+                    if (n != null && n > 0) {
+                      setState(() {
+                        _minutes = n;
+                        _isCustom = true;
+                      });
+                    }
+                  },
                 ),
               ),
-              const Text('120'),
             ],
           ),
+          const SizedBox(height: 12),
           Center(
             child: Text(
               '$_minutes 分钟',
@@ -431,12 +463,12 @@ class _LimitPickerSheetState extends State<_LimitPickerSheet> {
           const SizedBox(height: 20),
           Row(
             children: [
-              // 移除限额
               if (widget.hasLimit)
                 Expanded(
                   child: OutlinedButton(
                     onPressed: () => Navigator.pop(context, 0),
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                    style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red),
                     child: const Text('移除限额'),
                   ),
                 ),

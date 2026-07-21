@@ -18,6 +18,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
   List<AppUsageSession> _sessions = [];
   IconCache _icons = {};
   int _screenOffSeconds = 0;
+  int _totalRecordedSeconds = 0; // 含短会话的原始总时长
   bool _loading = true;
   String? _error;
 
@@ -40,6 +41,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
       final rawSessions = raw['sessions'] as List<dynamic>;
       final rawIcons = raw['icons'] as Map<dynamic, dynamic>? ?? {};
       final screenOffMs = raw['screenOffMillis'] as int? ?? 0;
+      final totalRecordedMs = raw['totalRecordedMillis'] as int? ?? 0;
 
       setState(() {
         _sessions = rawSessions
@@ -48,6 +50,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
             .toList();
         _icons = rawIcons.map((key, value) => MapEntry(key as String, value as Uint8List?));
         _screenOffSeconds = (screenOffMs / 1000).round();
+        _totalRecordedSeconds = (totalRecordedMs / 1000).round();
         _loading = false;
       });
     } catch (e) {
@@ -187,8 +190,8 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
         return db.compareTo(da);
       });
 
-    final totalDuration =
-        _sessions.fold<Duration>(Duration.zero, (sum, s) => sum + s.duration);
+    // 使用含短会话的原始总时长，而非仅过滤后的会话
+    final totalDuration = Duration(seconds: _totalRecordedSeconds);
 
     return ListView(
       padding: const EdgeInsets.all(16),

@@ -267,15 +267,20 @@ class MainActivity : FlutterActivity() {
             closeSession(now)
         }
 
+        // ── 计算所有会话的总时长（含短会话） ─────────────────────────
+        val totalRecordedMs = sessions.sumOf {
+            if (it.endTimeMillis == -1L) now - it.startTimeMillis
+            else it.endTimeMillis - it.startTimeMillis
+        }
+
         // ── 过滤短会话 + 收集图标 ────────────────────────────────────
-        val MIN_SESSION_MS = 60_000L  // < 1 分钟的丢掉
+        val MIN_SESSION_MS = 60_000L  // < 1 分钟的从显示列表过滤
         val iconCache = mutableMapOf<String, ByteArray>()
         val uninstalledIconSent = mutableSetOf<String>()
 
         val filteredSessions = sessions
             .filter { it.endTimeMillis - it.startTimeMillis >= MIN_SESSION_MS || it.endTimeMillis == -1L }
             .map { s ->
-                // 首次出现的包名才去拿图标（已卸载的 App 图标拿不到，只发一次空值）
                 if (s.packageName !in iconCache && s.packageName !in uninstalledIconSent) {
                     if (!s.isUninstalled) {
                         getAppIconBytes(s.packageName)?.let { iconCache[s.packageName] = it }
@@ -295,7 +300,8 @@ class MainActivity : FlutterActivity() {
         return mapOf(
             "sessions" to filteredSessions,
             "icons" to iconCache,
-            "screenOffMillis" to screenOffMs
+            "screenOffMillis" to screenOffMs,
+            "totalRecordedMillis" to totalRecordedMs
         )
     }
 
