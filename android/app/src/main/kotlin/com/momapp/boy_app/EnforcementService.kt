@@ -27,6 +27,7 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import java.util.Calendar
+import kotlin.jvm.Volatile
 
 /**
  * 前台服务：持续监控当前前台 App，检查使用限额，超限时弹出遮挡悬浮窗。
@@ -81,17 +82,19 @@ class EnforcementService : Service() {
 
     // ─── 轮询 ────────────────────────────────────────────────────────
 
-    private val enforcementLoop = Runnable {
-        try {
-            if (screenInteractive) {
-                val foregroundPkg = detectForegroundApp()
-                if (foregroundPkg != null) {
-                    enforcePackage(foregroundPkg)
+    private val enforcementLoop = object : Runnable {
+        override fun run() {
+            try {
+                if (screenInteractive) {
+                    val foregroundPkg = detectForegroundApp()
+                    if (foregroundPkg != null) {
+                        enforcePackage(foregroundPkg)
+                    }
                 }
+            } catch (_: Exception) {
+            } finally {
+                handler.postDelayed(this, POLL_INTERVAL_MS)
             }
-        } catch (_: Exception) {
-        } finally {
-            handler.postDelayed(this, POLL_INTERVAL_MS)
         }
     }
 
