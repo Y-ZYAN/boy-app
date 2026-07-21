@@ -9,6 +9,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
@@ -23,25 +25,29 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "hasUsageStatsPermission" -> {
-                    result.success(checkUsageStatsPermission())
-                }
-                "openUsageStatsSettings" -> {
-                    openUsageStatsSettings()
-                    result.success(true)
-                }
-                "queryUsageSessions" -> {
-                    val sessions = queryUsageSessions()
-                    result.success(sessions)
-                }
-                else -> {
-                    result.notImplemented()
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "hasUsageStatsPermission" -> {
+                            result.success(checkUsageStatsPermission())
+                        }
+                        "openUsageStatsSettings" -> {
+                            openUsageStatsSettings()
+                            result.success(true)
+                        }
+                        "queryUsageSessions" -> {
+                            querySessionsAsync(result)
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
                 }
             }
-        }
     }
+
+    // ─── 工具方法 ────────────────────────────────────────────────────────
 
     private fun checkUsageStatsPermission(): Boolean {
         val appOps = getSystemService(APP_OPS_SERVICE) as AppOpsManager
@@ -69,7 +75,7 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
-    // ─── 查询使用会话 ────────────────────────────────────────────────
+    // ─── 会话数据结构 ──────────────────────────────────────────────────
 
     data class Session(
         val packageName: String,
@@ -79,34 +85,50 @@ class MainActivity : FlutterActivity() {
         val isUninstalled: Boolean = false
     )
 
-    private fun queryUsageSessions(): Map<String, Any?> {
-        val usm = getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager
+    // ─── 查询使用会话（后台线程） ──────────────────────────────────────
 
-        // 今天 00:00 → 现在
-        val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val todayStart = cal.timeInMillis
-        val now = System.currentTimeMillis()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-        val sessions = mutableListOf<Session>()
-        val events = usm.queryEvents(todayStart, now)
+    private fun querySessionsAsync(channelResult: MethodChannel.Result) {
+        Thread {
+            try {
+                val data = buildSessionResult()
+                mainHandler.post { channelResult.success(data) }
+            } catch (e: Exception) {
+                mainHandler.post { channelResult.error("QUERY_FAILED", e.message, null) }
+            }
+        }.start()
+    }
 
+    /** 获取今天 00:00 到现在的毫秒时间戳对 */
+    private fun getTodayRange(): Pair<Long, Long> {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return Pair(cal.timeInMillis, System.currentTimeMillis())
+    }
+
+    /** 配对会话 + 息屏统计（单次事件遍历完成两件事） */
+    private data class PairingResult(
+        val sessions: List<Session>,
+        val screenOffMs: Long
+    )
+
+    private fun pairSessions(events: UsageEvents, now: Long): PairingResult {
+        val result = mutableListOf<Session>()
         var currentPkg: String? = null
         var currentStart: Long = 0
-
-        // 息屏跟踪
         var screenOffStart: Long = -1
         var screenOffMs: Long = 0
 
         fun closeSession(endTime: Long) {
             val pkg = currentPkg ?: return
             val appName = resolveAppName(pkg)
-            // 检测 App 是否已卸载（resolveAppName 返回包名本身说明已卸载）
             val uninstalled = appName == pkg
-            sessions.add(
+            result.add(
                 Session(
                     packageName = pkg,
                     appName = appName,
@@ -122,10 +144,7 @@ class MainActivity : FlutterActivity() {
             val e = UsageEvents.Event()
             events.getNextEvent(e)
 
-            val eventType = e.eventType
-
-            // 屏幕状态事件（先于包名检查，因为屏幕事件没有包名）
-            when (eventType) {
+            when (e.eventType) {
                 UsageEvents.Event.SCREEN_NON_INTERACTIVE -> {
                     screenOffStart = e.timeStamp
                 }
@@ -138,57 +157,60 @@ class MainActivity : FlutterActivity() {
             }
 
             val pkg = e.packageName ?: continue
-            val time = e.timeStamp
-
-            when (eventType) {
+            when (e.eventType) {
                 UsageEvents.Event.MOVE_TO_FOREGROUND,
                 UsageEvents.Event.ACTIVITY_RESUMED -> {
-                    if (currentPkg != null && currentPkg != pkg) {
-                        closeSession(time)
-                    }
+                    if (currentPkg != null && currentPkg != pkg) closeSession(e.timeStamp)
                     if (currentPkg == null) {
                         currentPkg = pkg
-                        currentStart = time
+                        currentStart = e.timeStamp
                     }
                 }
                 UsageEvents.Event.MOVE_TO_BACKGROUND,
                 UsageEvents.Event.ACTIVITY_PAUSED -> {
-                    if (currentPkg == pkg) {
-                        closeSession(time)
-                    }
+                    if (currentPkg == pkg) closeSession(e.timeStamp)
                 }
             }
         }
 
         // 屏幕仍处于息屏状态
-        if (screenOffStart > 0) {
-            screenOffMs += now - screenOffStart
-        }
-
+        if (screenOffStart > 0) screenOffMs += now - screenOffStart
         // 仍在使用的 App
-        if (currentPkg != null) {
-            closeSession(now)
-        }
+        if (currentPkg != null) closeSession(now)
 
-        // ── 计算所有会话的总时长（含短会话） ─────────────────────────
-        val totalRecordedMs = sessions.sumOf {
+        return PairingResult(result, screenOffMs)
+    }
+
+    /** 计算所有会话的原始总时长（含短会话） */
+    private fun computeTotalMillis(sessions: List<Session>, now: Long): Long {
+        return sessions.sumOf {
             if (it.endTimeMillis == -1L) now - it.startTimeMillis
             else it.endTimeMillis - it.startTimeMillis
         }
+    }
 
-        // ── 过滤短会话 + 收集图标 ────────────────────────────────────
-        val MIN_SESSION_MS = 60_000L  // < 1 分钟的从显示列表过滤
+    companion object {
+        private const val MIN_SESSION_MS = 60_000L
+    }
+
+    /** 过滤短会话，附图标数据 */
+    private fun filterAndPrepareResult(
+        sessions: List<Session>,
+        now: Long,
+        screenOffMs: Long,
+        totalRecordedMs: Long
+    ): Map<String, Any?> {
         val iconCache = mutableMapOf<String, ByteArray>()
-        val uninstalledIconSent = mutableSetOf<String>()
+        val uninstalledSeen = mutableSetOf<String>()
 
-        val filteredSessions = sessions
+        val filtered = sessions
             .filter { it.endTimeMillis - it.startTimeMillis >= MIN_SESSION_MS || it.endTimeMillis == -1L }
             .map { s ->
-                if (s.packageName !in iconCache && s.packageName !in uninstalledIconSent) {
+                if (s.packageName !in iconCache && s.packageName !in uninstalledSeen) {
                     if (!s.isUninstalled) {
                         getAppIconBytes(s.packageName)?.let { iconCache[s.packageName] = it }
                     } else {
-                        uninstalledIconSent.add(s.packageName)
+                        uninstalledSeen.add(s.packageName)
                     }
                 }
                 mapOf(
@@ -201,12 +223,24 @@ class MainActivity : FlutterActivity() {
             }
 
         return mapOf(
-            "sessions" to filteredSessions,
+            "sessions" to filtered,
             "icons" to iconCache,
             "screenOffMillis" to screenOffMs,
             "totalRecordedMillis" to totalRecordedMs
         )
     }
+
+    /** 主流程流水线 */
+    private fun buildSessionResult(): Map<String, Any?> {
+        val usm = getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager
+        val (todayStart, now) = getTodayRange()
+        val events = usm.queryEvents(todayStart, now)
+        val (pairedSessions, screenOffMs) = pairSessions(events, now)
+        val totalRecordedMs = computeTotalMillis(pairedSessions, now)
+        return filterAndPrepareResult(pairedSessions, now, screenOffMs, totalRecordedMs)
+    }
+
+    // ─── App 信息查询 ──────────────────────────────────────────────────
 
     /** 从 PackageManager 获取 App 的中文名；失败则回退到包名 */
     private fun resolveAppName(packageName: String): String {
@@ -225,7 +259,6 @@ class MainActivity : FlutterActivity() {
             val bitmap = if (drawable is BitmapDrawable) {
                 drawable.bitmap
             } else {
-                // VectorDrawable 等 → 画到固定尺寸 Bitmap 上
                 val bmp = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
                 val canvas = Canvas(bmp)
                 drawable.setBounds(0, 0, 96, 96)

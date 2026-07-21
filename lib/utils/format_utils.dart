@@ -1,6 +1,8 @@
+import 'dart:math';
+
 /// 格式化持续时间为「X小时Y分钟」或「X分钟」或「不到1分钟」
 String formatDuration(Duration d) {
-  final totalMinutes = d.inMinutes;
+  final totalMinutes = max(0, d.inMinutes);
   if (totalMinutes <= 0) return '不到1分钟';
   final hours = totalMinutes ~/ 60;
   final minutes = totalMinutes % 60;

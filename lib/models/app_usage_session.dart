@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 /// 一次 App 使用会话（从打开到关闭/切到后台）
 class AppUsageSession {
   final String packageName;
@@ -69,5 +67,3 @@ class AppLimit {
       };
 }
 
-/// App 图标缓存（包名 → PNG 字节数组）
-typedef IconCache = Map<String, Uint8List?>;

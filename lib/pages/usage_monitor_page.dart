@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../services/usage_stats_service.dart';
 import 'usage_dashboard_page.dart';
 
 /// 权限检查页面：检查「使用情况访问权限」，通过后跳转到仪表盘
@@ -13,7 +13,7 @@ class UsageMonitorPage extends StatefulWidget {
 
 class _UsageMonitorPageState extends State<UsageMonitorPage>
     with WidgetsBindingObserver {
-  final _channel = const MethodChannel('usage_stats');
+  final _service = UsageStatsService();
   bool _hasPermission = false;
   bool _checking = true;
 
@@ -40,11 +40,10 @@ class _UsageMonitorPageState extends State<UsageMonitorPage>
   Future<void> _checkPermission() async {
     setState(() => _checking = true);
     try {
-      final granted =
-          await _channel.invokeMethod<bool>('hasUsageStatsPermission');
+      final granted = await _service.hasPermission();
       if (mounted) {
         setState(() {
-          _hasPermission = granted ?? false;
+          _hasPermission = granted;
           _checking = false;
         });
       }
@@ -58,9 +57,7 @@ class _UsageMonitorPageState extends State<UsageMonitorPage>
     }
   }
 
-  void _openSettings() {
-    _channel.invokeMethod('openUsageStatsSettings');
-  }
+  void _openSettings() => _service.openSettings();
 
   @override
   Widget build(BuildContext context) {
@@ -81,7 +78,6 @@ class _UsageMonitorPageState extends State<UsageMonitorPage>
   Widget _buildBody() {
     if (_checking) return _buildChecking();
     if (!_hasPermission) return _buildNoPermission();
-    // 权限已通过 → 仪表盘（不使用 Center/Padding 包裹）
     return const UsageDashboardPage();
   }
 
