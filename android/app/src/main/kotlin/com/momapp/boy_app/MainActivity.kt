@@ -5,15 +5,17 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
 import android.os.Build
 import android.os.Process
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import java.text.SimpleDateFormat
+import java.io.ByteArrayOutputStream
 import java.util.Calendar
-import java.util.Locale
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "usage_stats"
@@ -76,7 +78,7 @@ class MainActivity : FlutterActivity() {
         val endTimeMillis: Long   // -1 表示正在使用
     )
 
-    private fun queryUsageSessions(): List<Map<String, Any?>> {
+    private fun queryUsageSessions(): Map<String, Any?> {
         val usm = getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager
 
         // 今天 00:00 → 现在
@@ -118,7 +120,6 @@ class MainActivity : FlutterActivity() {
             when (eventType) {
                 UsageEvents.Event.MOVE_TO_FOREGROUND,
                 UsageEvents.Event.ACTIVITY_RESUMED -> {
-                    // 切到另一个 App → 关掉前一个会话
                     if (currentPkg != null && currentPkg != pkg) {
                         closeSession(time)
                     }
@@ -136,20 +137,35 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        // 仍在使用的 App → 结束时间设为 now
+        // 仍在使用的 App
         if (currentPkg != null) {
             closeSession(now)
         }
 
-        // 序列化为 Flutter 可用的 List<Map>
-        return sessions.map { s ->
-            mapOf(
-                "packageName" to s.packageName,
-                "appName" to s.appName,
-                "startTimeMillis" to s.startTimeMillis,
-                "endTimeMillis" to if (s.endTimeMillis == -1L) -1L else s.endTimeMillis
-            )
-        }
+        // ── 过滤短会话 + 收集图标 ────────────────────────────────────
+        val MIN_SESSION_MS = 60_000L  // < 1 分钟的丢掉
+        val iconCache = mutableMapOf<String, ByteArray>()
+
+        val filteredSessions = sessions
+            .filter { it.endTimeMillis - it.startTimeMillis >= MIN_SESSION_MS || it.endTimeMillis == -1L }
+            .map { s ->
+                // 首次出现的包名才去拿图标
+                if (s.packageName !in iconCache) {
+                    getAppIconBytes(s.packageName)?.let { iconCache[s.packageName] = it }
+                }
+                mapOf(
+                    "packageName" to s.packageName,
+                    "appName" to s.appName,
+                    "startTimeMillis" to s.startTimeMillis,
+                    "endTimeMillis" to if (s.endTimeMillis == -1L) -1L else s.endTimeMillis
+                )
+            }
+
+        // icons: Map<String, ByteArray> → Flutter 收到 Map<String, Uint8List>
+        return mapOf(
+            "sessions" to filteredSessions,
+            "icons" to iconCache
+        )
     }
 
     /** 从 PackageManager 获取 App 的中文名；失败则回退到包名 */
@@ -159,6 +175,28 @@ class MainActivity : FlutterActivity() {
             packageManager.getApplicationLabel(appInfo).toString()
         } catch (_: PackageManager.NameNotFoundException) {
             packageName
+        }
+    }
+
+    /** 获取 App 图标 as PNG byte array；失败返回 null */
+    private fun getAppIconBytes(packageName: String): ByteArray? {
+        return try {
+            val drawable = packageManager.getApplicationIcon(packageName)
+            val bitmap = if (drawable is BitmapDrawable) {
+                drawable.bitmap
+            } else {
+                // VectorDrawable 等 → 画到固定尺寸 Bitmap 上
+                val bmp = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bmp)
+                drawable.setBounds(0, 0, 96, 96)
+                drawable.draw(canvas)
+                bmp
+            }
+            val stream = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            stream.toByteArray()
+        } catch (_: Exception) {
+            null
         }
     }
 }

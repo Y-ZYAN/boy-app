@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -216,6 +217,7 @@ class UsageDashboardPage extends StatefulWidget {
 class _UsageDashboardPageState extends State<UsageDashboardPage> {
   final _channel = const MethodChannel('usage_stats');
   List<AppUsageSession> _sessions = [];
+  Map<String, Uint8List?> _icons = {};
   bool _loading = true;
   String? _error;
 
@@ -231,13 +233,18 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
       _error = null;
     });
     try {
-      final raw = await _channel.invokeMethod<List<dynamic>>('queryUsageSessions');
+      final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>('queryUsageSessions');
       if (raw == null || !mounted) return;
+
+      final rawSessions = raw['sessions'] as List<dynamic>;
+      final rawIcons = raw['icons'] as Map<dynamic, dynamic>? ?? {};
+
       setState(() {
-        _sessions = raw
+        _sessions = rawSessions
             .cast<Map<dynamic, dynamic>>()
             .map((m) => AppUsageSession.fromMap(Map<String, dynamic>.from(m)))
             .toList();
+        _icons = rawIcons.map((key, value) => MapEntry(key as String, value as Uint8List?));
         _loading = false;
       });
     } catch (e) {
@@ -248,6 +255,42 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
         });
       }
     }
+  }
+
+  /// 显示 App 图标（真实图标）或回退到首字母头像
+  Widget _appIcon(String appName, String packageName, {bool active = false}) {
+    final iconBytes = _icons[packageName];
+    if (iconBytes != null && iconBytes.isNotEmpty) {
+      return CircleAvatar(
+        radius: 18,
+        backgroundColor: Colors.transparent,
+        child: ClipOval(
+          child: Image.memory(
+            iconBytes,
+            width: 36,
+            height: 36,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _fallbackAvatar(appName, active: active),
+          ),
+        ),
+      );
+    }
+    return _fallbackAvatar(appName, active: active);
+  }
+
+  Widget _fallbackAvatar(String appName, {bool active = false}) {
+    return CircleAvatar(
+      backgroundColor: active
+          ? Colors.green.withOpacity(0.15)
+          : Theme.of(context).colorScheme.primaryContainer,
+      child: Text(
+        appName.isNotEmpty ? appName[0].toUpperCase() : '?',
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          color: active ? Colors.green : Theme.of(context).colorScheme.onPrimaryContainer,
+        ),
+      ),
+    );
   }
 
   @override
@@ -375,19 +418,12 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
     // 按开始时间排序（最早的在前）
     sessions.sort((a, b) => a.startTime.compareTo(b.startTime));
 
+    // 取该组第一个 session 的 packageName 来查图标
+    final pkg = sessions.first.packageName;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ExpansionTile(
-        leading: CircleAvatar(
-          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-          child: Text(
-            appName.isNotEmpty ? appName[0].toUpperCase() : '?',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.onPrimaryContainer,
-            ),
-          ),
-        ),
+        leading: _appIcon(appName, pkg),
         title: Text(appName, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text('总计 ${formatDuration(total)}',
             style: TextStyle(color: Colors.grey[600], fontSize: 13)),
@@ -473,18 +509,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 3),
       child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: s.isActive
-              ? Colors.green.withOpacity(0.15)
-              : Theme.of(context).colorScheme.primaryContainer,
-          child: Text(
-            s.appName.isNotEmpty ? s.appName[0].toUpperCase() : '?',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: s.isActive ? Colors.green : Theme.of(context).colorScheme.onPrimaryContainer,
-            ),
-          ),
-        ),
+        leading: _appIcon(s.appName, s.packageName, active: s.isActive),
         title: Text(s.appName, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(formatTimeRange(s.startTime, s.endTime)),
         trailing: Column(
