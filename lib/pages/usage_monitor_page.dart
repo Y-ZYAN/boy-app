@@ -69,9 +69,13 @@ class _UsageMonitorPageState extends State<UsageMonitorPage>
 
   /// 确保监控服务已启动；未授权悬浮窗则跳转设置
   Future<void> _ensureMonitoring() async {
+    // 已在运行就不重复启动
+    if (await EnforcementService.isMonitoringActive()) return;
+    // 等 Widget 树渲染完再弹对话框，避免 BuildContext 未就绪
+    await Future<void>.delayed(Duration.zero);
+
     final hasOverlay = await EnforcementService.checkOverlayPermission();
     if (!hasOverlay && mounted) {
-      // 首次提示去授权悬浮窗
       final go = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -91,11 +95,12 @@ class _UsageMonitorPageState extends State<UsageMonitorPage>
       );
       if (go == true) {
         await EnforcementService.openOverlaySettings();
-        // 返回后下次轮询自动重检
+      } else {
+        // 用户跳过 → 仍尝试启动（无遮挡功能）
+        await EnforcementService.startMonitoring();
       }
       return;
     }
-    // 已授权或用户跳过 → 尝试启动服务
     await EnforcementService.startMonitoring();
   }
 

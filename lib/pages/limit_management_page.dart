@@ -31,44 +31,49 @@ class _LimitManagementPageState extends State<LimitManagementPage> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() => _loading = true);
 
-    // 并行获取三个数据源
-    final results = await Future.wait([
-      EnforcementService.getInstalledApps(),
-      EnforcementService.getAppLimits(),
-      _computeUsageMap(),
-    ]);
+    try {
+      // 并行获取三个数据源，单个失败不影响其他
+      final results = await Future.wait([
+        EnforcementService.getInstalledApps().catchError((_) => <Map<String, dynamic>>[]),
+        EnforcementService.getAppLimits().catchError((_) => <Map<String, dynamic>>[]),
+        _computeUsageMap(),
+      ]);
 
-    final apps = results[0] as List<Map<String, dynamic>>;
-    final limits = results[1] as List<Map<String, dynamic>>;
-    final usageMap = results[2] as Map<String, int>;
+      final apps = results[0] as List<Map<String, dynamic>>;
+      final limits = results[1] as List<Map<String, dynamic>>;
+      final usageMap = results[2] as Map<String, int>;
 
-    // 构建限额查找表
-    final limitMap = <String, int>{};
-    for (final l in limits) {
-      limitMap[l['packageName'] as String] = l['dailyMinutes'] as int;
+      // 构建限额查找表
+      final limitMap = <String, int>{};
+      for (final l in limits) {
+        limitMap[l['packageName'] as String] = l['dailyMinutes'] as int;
+      }
+
+      final items = apps.map((app) {
+        final pkg = app['packageName'] as String;
+        return _AppLimitItem(
+          packageName: pkg,
+          appName: app['appName'] as String,
+          dailyMinutes: limitMap[pkg] ?? 0,
+          usedSeconds: usageMap[pkg] ?? 0,
+        );
+      }).toList();
+
+      // 有限额的排前面，按名称排序
+      items.sort((a, b) {
+        final aHas = a.dailyMinutes > 0 ? 0 : 1;
+        final bHas = b.dailyMinutes > 0 ? 0 : 1;
+        if (aHas != bHas) return aHas.compareTo(bHas);
+        return a.appName.compareTo(b.appName);
+      });
+
+      if (mounted) setState(() { _items = items; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() { _loading = false; });
     }
-
-    final items = apps.map((app) {
-      final pkg = app['packageName'] as String;
-      return _AppLimitItem(
-        packageName: pkg,
-        appName: app['appName'] as String,
-        dailyMinutes: limitMap[pkg] ?? 0,
-        usedSeconds: usageMap[pkg] ?? 0,
-      );
-    }).toList();
-
-    // 有限额的排前面，按 CPU 名称排序
-    items.sort((a, b) {
-      final aHas = a.dailyMinutes > 0 ? 0 : 1;
-      final bHas = b.dailyMinutes > 0 ? 0 : 1;
-      if (aHas != bHas) return aHas.compareTo(bHas);
-      return a.appName.compareTo(b.appName);
-    });
-
-    if (mounted) setState(() { _items = items; _loading = false; });
   }
 
   Future<Map<String, int>> _computeUsageMap() async {
