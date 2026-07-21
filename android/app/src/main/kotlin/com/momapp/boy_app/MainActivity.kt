@@ -107,6 +107,21 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_ARGS", "packageName missing", null)
                     }
                 }
+                "getInstalledApps" -> {
+                    val list = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
+                        .filter { info ->
+                            // 只保留有桌面图标的 App（排除系统服务）
+                            packageManager.getLaunchIntentForPackage(info.packageName) != null
+                        }
+                        .filter { it.packageName != packageName } // 排除自己
+                        .map { info ->
+                            mapOf(
+                                "packageName" to info.packageName,
+                                "appName" to (packageManager.getApplicationLabel(info)?.toString() ?: info.packageName)
+                            )
+                        }
+                    result.success(list)
+                }
                 else -> {
                     result.notImplemented()
                 }

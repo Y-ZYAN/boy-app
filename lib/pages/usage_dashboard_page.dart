@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/app_usage_session.dart';
 import '../utils/format_utils.dart';
+import 'limit_management_page.dart';
 
 /// 使用数据仪表盘：时长排序 + 近期使用 双 Tab
 class UsageDashboardPage extends StatefulWidget {
@@ -136,7 +137,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
     }
 
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Column(
         children: [
           Material(
@@ -145,6 +146,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
               tabs: [
                 Tab(text: '时长排序'),
                 Tab(text: '近期使用'),
+                Tab(text: '限额管理'),
               ],
             ),
           ),
@@ -153,6 +155,10 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
               children: [
                 _buildDurationTab(),
                 _buildRecentTab(),
+                LimitManagementPage(
+                  todaySessions: _sessions,
+                  iconCache: _icons,
+                ),
               ],
             ),
           ),

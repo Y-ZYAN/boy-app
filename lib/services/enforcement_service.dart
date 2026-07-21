@@ -67,4 +67,11 @@ class EnforcementService {
     });
     return seconds ?? 0;
   }
+
+  /// 获取所有已安装 App（有桌面图标的）
+  static Future<List<Map<String, dynamic>>> getInstalledApps() async {
+    final list = await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
+    if (list == null) return [];
+    return list.cast<Map<String, dynamic>>();
+  }
 }
