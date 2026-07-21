@@ -218,8 +218,7 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
                       ),
                 ),
                 const SizedBox(height: 8),
-                Text('息屏 ${formatDuration(Duration(seconds: _screenOffSeconds))}',
-                    style: TextStyle(fontSize: 13, color: Colors.grey[500])),
+                _buildTimeBreakdown(totalDuration.inSeconds),
               ],
             ),
           ),
@@ -320,6 +319,26 @@ class _UsageDashboardPageState extends State<UsageDashboardPage> {
           ],
         );
       },
+    );
+  }
+
+  /// 时间分解：已记录 + 息屏 + 其他
+  Widget _buildTimeBreakdown(int recordedSeconds) {
+    final now = DateTime.now();
+    final midnight = DateTime(now.year, now.month, now.day);
+    final elapsedSeconds = now.difference(midnight).inSeconds;
+    final otherSeconds =
+        elapsedSeconds - recordedSeconds - _screenOffSeconds;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('息屏 ${formatDuration(Duration(seconds: _screenOffSeconds))}',
+            style: TextStyle(fontSize: 13, color: Colors.grey[500])),
+        if (otherSeconds > 60)
+          Text('其他 ${formatDuration(Duration(seconds: otherSeconds))}',
+              style: TextStyle(fontSize: 13, color: Colors.grey[500])),
+      ],
     );
   }
 

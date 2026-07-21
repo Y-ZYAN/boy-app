@@ -286,14 +286,30 @@ class _LimitManagementPageState extends State<LimitManagementPage> {
       ),
     );
 
-    if (result == null) return;
+    if (result == null || !mounted) return;
 
-    if (result == 0) {
-      // 移除限额
-      await EnforcementService.removeAppLimit(item.packageName);
-    } else {
-      // 设置限额
-      await EnforcementService.setAppLimit(item.packageName, result);
+    try {
+      if (result == 0) {
+        await EnforcementService.removeAppLimit(item.packageName);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('已移除限额'), duration: Duration(seconds: 2)),
+          );
+        }
+      } else {
+        await EnforcementService.setAppLimit(item.packageName, result);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已设置 $result 分钟限额'), duration: Duration(seconds: 2)),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('设置失败: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
     _load();
   }
